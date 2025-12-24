@@ -9,12 +9,18 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@wokwi/elements": "^1.9.1",
+    "fabric": "^7.0.0",
+    "monaco-editor": "^0.55.1",
     "next": "16.0.7",
     "react": "19.2.1",
-    "react-dom": "19.2.1"
+    "react-dom": "19.2.1",
+    "react-split-pane": "^3.0.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/fabric": "^5.3.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
