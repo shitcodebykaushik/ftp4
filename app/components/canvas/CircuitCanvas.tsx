@@ -67,13 +67,17 @@ export default function CircuitCanvas() {
         const handlePinChange = (event: Event) => {
           const customEvent = event as CustomEvent<{ pin: number; value: number }>;
           const { pin, value } = customEvent.detail;
+          console.log(`[Canvas] Pin change event: pin=${pin}, value=${value}`);
           
           if (pin === 13) {
-            (led as HTMLElement & { value: boolean }).value = value > 0.5;
+            const newValue = value > 0.5;
+            console.log(`[Canvas] Setting LED to ${newValue}`);
+            (led as HTMLElement & { value: boolean }).value = newValue;
           }
         };
 
         window.addEventListener('arduino-pin-change', handlePinChange);
+        console.log('[Canvas] LED listener registered for pin 13');
 
         setComponents([
           { id: 'arduino', type: 'arduino-uno', element: arduino, x: 100, y: 100 },

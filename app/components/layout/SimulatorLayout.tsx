@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { SplitPane, Pane } from 'react-split-pane';
 import CodeEditor from '../editor/CodeEditor';
 import CircuitCanvas from '../canvas/CircuitCanvas';
@@ -20,6 +20,7 @@ export default function SimulatorLayout() {
     serialOutput: [],
     currentTime: 0,
   });
+  const stopSimulation = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const handleSerialOutput = (event: Event) => {
@@ -32,6 +33,9 @@ export default function SimulatorLayout() {
 
     return () => {
       window.removeEventListener('arduino-serial', handleSerialOutput);
+      if (stopSimulation.current) {
+        stopSimulation.current();
+      }
     };
   }, []);
 
@@ -43,92 +47,118 @@ export default function SimulatorLayout() {
 
     setSerialOutput((prev) => [
       ...prev,
-      { timestamp: Date.now(), message: 'Simulation started...' },
+      { timestamp: Date.now(), message: '=== Simulation started ===' },
     ]);
 
     try {
-      const arduino = {
-        pinMode: (pin: number, mode: string) => {
-          simulator.pinMode(pin, mode as 'INPUT' | 'OUTPUT' | 'INPUT_PULLUP');
-        },
-        digitalWrite: (pin: number, value: number) => {
-          simulator.digitalWrite(pin, value);
-        },
-        digitalRead: (pin: number) => simulator.digitalRead(pin),
-        analogWrite: (pin: number, value: number) => {
-          simulator.analogWrite(pin, value);
-        },
-        analogRead: (pin: number) => simulator.analogRead(pin),
-        delay: (ms: number) => simulator.delay(ms),
-        LED_BUILTIN: simulator.LED_BUILTIN,
-        HIGH: 1,
-        LOW: 0,
-        INPUT: 'INPUT',
-        OUTPUT: 'OUTPUT',
-        INPUT_PULLUP: 'INPUT_PULLUP',
+      let shouldStop = false;
+      stopSimulation.current = () => {
+        shouldStop = true;
       };
 
-      const serial = {
+      const pinMode = (pin: number, mode: string) => {
+        simulator.pinMode(pin, mode as 'INPUT' | 'OUTPUT' | 'INPUT_PULLUP');
+      };
+
+      const digitalWrite = (pin: number, value: number) => {
+        simulator.digitalWrite(pin, value);
+      };
+
+      const digitalRead = (pin: number) => simulator.digitalRead(pin);
+
+      const analogWrite = (pin: number, value: number) => {
+        simulator.analogWrite(pin, value);
+      };
+
+      const analogRead = (pin: number) => simulator.analogRead(pin);
+
+      const delay = (ms: number) => simulator.delay(ms);
+
+      const LED_BUILTIN = simulator.LED_BUILTIN;
+      const HIGH = 1;
+      const LOW = 0;
+      const INPUT = 'INPUT';
+      const OUTPUT = 'OUTPUT';
+      const INPUT_PULLUP = 'INPUT_PULLUP';
+
+      const Serial = {
         begin: (baud: number) => simulator.serialBegin(baud),
-        print: (msg: string) => simulator.serialPrint(String(msg)),
-        println: (msg: string) => simulator.serialPrintln(String(msg)),
+        print: (msg: string | number) => simulator.serialPrint(String(msg)),
+        println: (msg: string | number) => simulator.serialPrintln(String(msg)),
       };
 
-      const wrappedCode = `
-        (async function() {
-          const { pinMode, digitalWrite, digitalRead, analogWrite, analogRead, delay, LED_BUILTIN, HIGH, LOW, INPUT, OUTPUT, INPUT_PULLUP } = arduino;
-          const Serial = serial;
-          
-          async function setup() {
-            ${extractSetupCode(code)}
-          }
-          
-          async function loop() {
-            ${extractLoopCode(code)}
-          }
-          
-          await setup();
-          
-          while(true) {
-            await loop();
-          }
-        })();
-      `;
+      const setupCode = extractSetupCode(code);
+      const loopCode = extractLoopCode(code);
 
-      // Note: Function constructor is used here for code execution - consider alternative approaches for production
-      (new Function('arduino', 'serial', `"use strict"; ${wrappedCode}`))(arduino, serial);
+      // Execute setup
+      const setupFunction = new Function(
+        'pinMode', 'digitalWrite', 'digitalRead', 'analogWrite', 'analogRead', 
+        'delay', 'LED_BUILTIN', 'HIGH', 'LOW', 'INPUT', 'OUTPUT', 'INPUT_PULLUP', 'Serial',
+        `return (async function() { ${setupCode} })();`
+      );
+
+      await setupFunction(
+        pinMode, digitalWrite, digitalRead, analogWrite, analogRead,
+        delay, LED_BUILTIN, HIGH, LOW, INPUT, OUTPUT, INPUT_PULLUP, Serial
+      );
+
+      // Execute loop continuously
+      const loopFunction = new Function(
+        'pinMode', 'digitalWrite', 'digitalRead', 'analogWrite', 'analogRead',
+        'delay', 'LED_BUILTIN', 'HIGH', 'LOW', 'INPUT', 'OUTPUT', 'INPUT_PULLUP', 'Serial',
+        `return (async function() { ${loopCode} })();`
+      );
+
+      while (!shouldStop) {
+        await loopFunction(
+          pinMode, digitalWrite, digitalRead, analogWrite, analogRead,
+          delay, LED_BUILTIN, HIGH, LOW, INPUT, OUTPUT, INPUT_PULLUP, Serial
+        );
+      }
     } catch (error) {
       console.error('Simulation error:', error);
       setSerialOutput((prev) => [
         ...prev,
-        { timestamp: Date.now(), message: `Error: ${error}` },
+        { timestamp: Date.now(), message: `❌ Error: ${error}` },
       ]);
+      setSimulationState((prev) => ({ ...prev, isRunning: false }));
     }
   };
 
   const handlePause = () => {
     setSimulationState((prev) => ({ ...prev, isPaused: true }));
-    const simulator = getSimulator();
-    simulator.stop();
+    if (stopSimulation.current) {
+      stopSimulation.current();
+    }
     
     setSerialOutput((prev) => [
       ...prev,
-      { timestamp: Date.now(), message: 'Simulation paused.' },
+      { timestamp: Date.now(), message: '⏸️ Simulation paused.' },
     ]);
   };
 
   const handleStop = () => {
     setSimulationState((prev) => ({ ...prev, isRunning: false, isPaused: false }));
+    if (stopSimulation.current) {
+      stopSimulation.current();
+      stopSimulation.current = null;
+    }
+    
     const simulator = getSimulator();
     simulator.stop();
     
     setSerialOutput((prev) => [
       ...prev,
-      { timestamp: Date.now(), message: 'Simulation stopped.' },
+      { timestamp: Date.now(), message: '⏹️ Simulation stopped.' },
     ]);
   };
 
   const handleReset = () => {
+    if (stopSimulation.current) {
+      stopSimulation.current();
+      stopSimulation.current = null;
+    }
+
     setSimulationState({
       isRunning: false,
       isPaused: false,

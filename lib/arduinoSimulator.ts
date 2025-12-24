@@ -36,6 +36,7 @@ export class ArduinoSimulator {
     const pinState = this.pins.get(pin);
     if (pinState && pinState.mode === 'OUTPUT') {
       pinState.value = value ? 1 : 0;
+      console.log(`[Arduino] digitalWrite(${pin}, ${value}) -> ${pinState.value}`);
       this.notifyPinChange(pin, pinState.value);
     }
   }
@@ -116,6 +117,7 @@ export class ArduinoSimulator {
 
   private notifyPinChange(pin: number, value: number) {
     if (typeof window !== 'undefined') {
+      console.log(`[Arduino] Pin ${pin} changed to ${value}`);
       window.dispatchEvent(
         new CustomEvent('arduino-pin-change', {
           detail: { pin, value },
