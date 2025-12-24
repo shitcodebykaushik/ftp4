@@ -1,156 +1,257 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import * as fabric from 'fabric';
-import type { Component } from '@/types/simulator';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import ComponentPalette from './ComponentPalette';
+
+interface WokwiComponent {
+  id: string;
+  type: string;
+  element: HTMLElement;
+  x: number;
+  y: number;
+}
 
 export default function CircuitCanvas() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
-  const [components] = useState<Component[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [components, setComponents] = useState<WokwiComponent[]>([]);
+  const [selectedComponent, setSelectedComponent] = useState<string | null>(null);
+  const elementsLoaded = useRef(false);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!containerRef.current || elementsLoaded.current) return;
 
-    const canvas = new fabric.Canvas(canvasRef.current, {
-      width: canvasRef.current.parentElement?.clientWidth || 800,
-      height: canvasRef.current.parentElement?.clientHeight || 600,
-      backgroundColor: '#1a1a1a',
-    });
+    const loadWokwiElements = async () => {
+      try {
+        await import('@wokwi/elements');
+        elementsLoaded.current = true;
 
-    fabricCanvasRef.current = canvas;
+        const container = containerRef.current;
+        if (!container) return;
 
-    const handleResize = () => {
-      if (canvasRef.current?.parentElement) {
-        canvas.setDimensions({
-          width: canvasRef.current.parentElement.clientWidth,
-          height: canvasRef.current.parentElement.clientHeight,
+        const arduino = document.createElement('wokwi-arduino-uno');
+        arduino.id = 'arduino';
+        arduino.style.position = 'absolute';
+        arduino.style.left = '100px';
+        arduino.style.top = '100px';
+        arduino.style.cursor = 'move';
+        container.appendChild(arduino);
+
+        const led = document.createElement('wokwi-led');
+        led.id = 'led1';
+        led.setAttribute('color', 'red');
+        led.setAttribute('pin', '13');
+        led.style.position = 'absolute';
+        led.style.left = '400px';
+        led.style.top = '150px';
+        led.style.cursor = 'move';
+        container.appendChild(led);
+
+        const button = document.createElement('wokwi-pushbutton');
+        button.id = 'button1';
+        button.setAttribute('color', 'blue');
+        button.setAttribute('pin', '2');
+        button.style.position = 'absolute';
+        button.style.left = '400px';
+        button.style.top = '250px';
+        button.style.cursor = 'pointer';
+        container.appendChild(button);
+
+        button.addEventListener('button-press', () => {
+          console.log('Button pressed');
         });
-        canvas.renderAll();
+
+        button.addEventListener('button-release', () => {
+          console.log('Button released');
+        });
+
+        const handlePinChange = (event: Event) => {
+          const customEvent = event as CustomEvent<{ pin: number; value: number }>;
+          const { pin, value } = customEvent.detail;
+          
+          if (pin === 13) {
+            (led as HTMLElement & { value: boolean }).value = value > 0.5;
+          }
+        };
+
+        window.addEventListener('arduino-pin-change', handlePinChange);
+
+        setComponents([
+          { id: 'arduino', type: 'arduino-uno', element: arduino, x: 100, y: 100 },
+          { id: 'led1', type: 'led', element: led, x: 400, y: 150 },
+          { id: 'button1', type: 'pushbutton', element: button, x: 400, y: 250 },
+        ]);
+
+        makeDraggable(arduino, 'arduino');
+        makeDraggable(led, 'led1');
+        makeDraggable(button, 'button1');
+
+        return () => {
+          window.removeEventListener('arduino-pin-change', handlePinChange);
+        };
+      } catch (error) {
+        console.error('Failed to load Wokwi elements:', error);
       }
     };
 
-    window.addEventListener('resize', handleResize);
-
-    addBreadboard(canvas);
-    addComponentPalette(canvas);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      canvas.dispose();
-    };
+    loadWokwiElements();
   }, []);
 
-  const addBreadboard = (canvas: fabric.Canvas) => {
-    const breadboardWidth = 400;
-    const breadboardHeight = 300;
-    const centerX = (canvas.width as number) / 2;
-    const centerY = (canvas.height as number) / 2;
+  const makeDraggable = (element: HTMLElement, id: string) => {
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let initialX = 0;
+    let initialY = 0;
 
-    const breadboard = new fabric.Rect({
-      left: centerX - breadboardWidth / 2,
-      top: centerY - breadboardHeight / 2,
-      width: breadboardWidth,
-      height: breadboardHeight,
-      fill: '#2a2a2a',
-      stroke: '#444',
-      strokeWidth: 2,
-      selectable: false,
-      rx: 5,
-      ry: 5,
-    });
-
-    const divider = new fabric.Line(
-      [
-        centerX - breadboardWidth / 2,
-        centerY,
-        centerX + breadboardWidth / 2,
-        centerY,
-      ],
-      {
-        stroke: '#555',
-        strokeWidth: 1,
-        selectable: false,
+    const onMouseDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).tagName.toLowerCase().includes('button')) {
+        return;
       }
-    );
 
-    canvas.add(breadboard, divider);
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = element.getBoundingClientRect();
+      const parent = element.parentElement?.getBoundingClientRect();
+      initialX = rect.left - (parent?.left || 0);
+      initialY = rect.top - (parent?.top || 0);
+      element.style.zIndex = '1000';
+      setSelectedComponent(id);
+    };
 
-    for (let i = 0; i < 30; i++) {
-      for (let j = 0; j < 5; j++) {
-        const hole = new fabric.Circle({
-          left: centerX - breadboardWidth / 2 + 20 + i * 12,
-          top: centerY - breadboardHeight / 2 + 30 + j * 15,
-          radius: 2,
-          fill: '#1a1a1a',
-          selectable: false,
-        });
-        canvas.add(hole);
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      e.preventDefault();
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const newX = initialX + dx;
+      const newY = initialY + dy;
+
+      element.style.left = `${newX}px`;
+      element.style.top = `${newY}px`;
+    };
+
+    const onMouseUp = () => {
+      if (isDragging) {
+        isDragging = false;
+        element.style.zIndex = '1';
+
+        setComponents((prev) =>
+          prev.map((comp) =>
+            comp.id === id
+              ? {
+                  ...comp,
+                  x: parseInt(element.style.left),
+                  y: parseInt(element.style.top),
+                }
+              : comp
+          )
+        );
       }
-    }
+    };
 
-    for (let i = 0; i < 30; i++) {
-      for (let j = 0; j < 5; j++) {
-        const hole = new fabric.Circle({
-          left: centerX - breadboardWidth / 2 + 20 + i * 12,
-          top: centerY + 20 + j * 15,
-          radius: 2,
-          fill: '#1a1a1a',
-          selectable: false,
-        });
-        canvas.add(hole);
-      }
-    }
+    element.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      element.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
   };
 
-  const addComponentPalette = (canvas: fabric.Canvas) => {
-    const paletteX = 20;
-    const paletteY = 20;
-    const componentSize = 50;
-    const spacing = 10;
+  const addComponent = (type: string) => {
+    if (!containerRef.current || !elementsLoaded.current) return;
 
-    const components = [
-      { label: 'Arduino', color: '#4a9eff' },
-      { label: 'LED', color: '#ff4757' },
-      { label: 'Button', color: '#ffa502' },
-      { label: 'Resistor', color: '#f1c40f' },
-    ];
+    const id = `${type}-${Date.now()}`;
+    const x = 200 + Math.random() * 200;
+    const y = 200 + Math.random() * 200;
 
-    components.forEach((comp, index) => {
-      const rect = new fabric.Rect({
-        left: paletteX,
-        top: paletteY + index * (componentSize + spacing),
-        width: componentSize,
-        height: componentSize,
-        fill: comp.color,
-        stroke: '#fff',
-        strokeWidth: 2,
-        rx: 5,
-        ry: 5,
-        selectable: true,
+    const element = document.createElement(`wokwi-${type}`) as HTMLElement;
+    element.id = id;
+    element.style.position = 'absolute';
+    element.style.left = `${x}px`;
+    element.style.top = `${y}px`;
+    element.style.cursor = 'move';
+
+    if (type === 'led') {
+      element.setAttribute('color', 'red');
+    } else if (type === 'pushbutton') {
+      element.setAttribute('color', 'blue');
+      element.style.cursor = 'pointer';
+      element.addEventListener('button-press', () => {
+        console.log(`Button ${id} pressed`);
       });
+    } else if (type === 'resistor') {
+      element.setAttribute('value', '220');
+    } else if (type === 'potentiometer') {
+      element.setAttribute('value', '50');
+    }
 
-      const text = new fabric.FabricText(comp.label, {
-        left: paletteX + componentSize / 2,
-        top: paletteY + index * (componentSize + spacing) + componentSize / 2,
-        fontSize: 10,
-        fill: '#fff',
-        originX: 'center',
-        originY: 'center',
-        selectable: false,
-      });
+    containerRef.current.appendChild(element);
+    makeDraggable(element, id);
 
-      canvas.add(rect, text);
-    });
+    setComponents((prev) => [...prev, { id, type, element, x, y }]);
   };
+
+  const deleteSelectedComponent = useCallback(() => {
+    if (!selectedComponent) return;
+
+    const component = components.find((c) => c.id === selectedComponent);
+    if (component && component.id !== 'arduino') {
+      component.element.remove();
+      setComponents((prev) => prev.filter((c) => c.id !== selectedComponent));
+      setSelectedComponent(null);
+    }
+  }, [selectedComponent, components]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedComponent) {
+        deleteSelectedComponent();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedComponent, components, deleteSelectedComponent]);
 
   return (
-    <div className="h-full w-full bg-[#1a1a1a]">
-      <div className="border-b border-zinc-700 bg-[#252526] px-4 py-2">
+    <div className="h-full w-full bg-[#1a1a1a] flex flex-col">
+      <div className="border-b border-zinc-700 bg-[#252526] px-4 py-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-zinc-300">Circuit Canvas</h2>
+        {selectedComponent && selectedComponent !== 'arduino' && (
+          <button
+            onClick={deleteSelectedComponent}
+            className="rounded bg-red-700 px-3 py-1 text-xs text-white hover:bg-red-600"
+          >
+            Delete Selected (Del)
+          </button>
+        )}
       </div>
-      <div className="h-[calc(100%-41px)] w-full">
-        <canvas ref={canvasRef} />
+
+      <ComponentPalette onAddComponent={addComponent} />
+
+      <div
+        ref={containerRef}
+        className="flex-1 w-full relative overflow-auto bg-gradient-to-br from-[#1a1a1a] to-[#252525]"
+        style={{ minHeight: '500px' }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            setSelectedComponent(null);
+          }
+        }}
+      >
+        <div className="absolute inset-0 opacity-10 pointer-events-none"
+          style={{
+            backgroundImage: `
+              repeating-linear-gradient(0deg, transparent, transparent 19px, #333 19px, #333 20px),
+              repeating-linear-gradient(90deg, transparent, transparent 19px, #333 19px, #333 20px)
+            `,
+          }}
+        />
       </div>
     </div>
   );

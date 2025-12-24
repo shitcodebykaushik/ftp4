@@ -6,7 +6,7 @@ export interface Component {
     y: number;
   };
   rotation: number;
-  properties: Record<string, any>;
+  properties: Record<string, string | number | boolean>;
 }
 
 export interface Wire {
